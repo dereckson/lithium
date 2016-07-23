@@ -8,6 +8,7 @@
 
 namespace lithium\data\model;
 
+use Exception;
 use Countable;
 use lithium\util\Set;
 use lithium\core\Libraries;
@@ -311,6 +312,155 @@ class Relationship extends \lithium\core\Object {
 				return $model::all(Set::merge($query, $options));
 			}
 		);
+	}
+
+	public function embed(&$collection, $options = array()) {
+		$keys = $this->key();
+		if (count($keys) !== 1) {
+			throw new Exception("The embedding doesn't support composite primary key.");
+		}
+		list($formKey, $toKey) = each($keys);
+
+		$related = array();
+
+		if ($this->type() === 'belongsTo') {
+
+			$indexes = $this->_index($collection, $formKey);
+			$related = $this->_find(array_keys($indexes), $options);
+
+			$fieldName = $this->fieldName();
+			$indexes = $this->_index($related, $toKey);
+			$this->_cleanup($collection);
+
+			foreach ($collection as $index => $source) {
+				if (is_object($source)) {
+					$value = $source->{$formKey};
+					if (isset($indexes[$value])) {
+						$source->{$fieldName} = $related[$indexes[$value]];
+					}
+				} else {
+					$value = $source[$formKey];
+					if (isset($indexes[$value])) {
+						$collection[$index][$fieldName] = $related[$indexes[$value]];
+					}
+				}
+			}
+
+		} elseif ($this->type() === 'hasMany') {
+
+			$indexes = $this->_index($collection, $formKey);
+			$related = $this->_find(array_keys($indexes), $options);
+
+			$fieldName = $this->fieldName();
+
+			$this->_cleanup($collection);
+
+			foreach ($collection as $index => $entity) {
+				if (is_object($entity)) {
+					$entity->{$fieldName} = array();
+				} else {
+					$collection[$index][$fieldName] = array();
+				}
+			}
+
+			foreach ($related as $index => $entity) {
+				if (is_object($entity)) {
+					$value = $entity->{$toKey};
+					if (isset($indexes[$value])) {
+						$source = $collection[$indexes[$value]];
+						$source->{$fieldName}[] = $entity;
+					}
+				} else {
+					$value = $entity[$toKey];
+					if (isset($indexes[$value])) {
+						$collection[$indexes[$value]][$fieldName][] = $entity;
+					}
+				}
+			}
+
+		} elseif ($this->type() === 'hasOne') {
+
+			$indexes = $this->_index($collection, $formKey);
+			$related = $this->_find(array_keys($indexes), $options);
+			$fieldName = $this->fieldName();
+			$this->_cleanup($collection);
+			foreach ($related as $index => $entity) {
+				if (is_object($entity)) {
+					$value = $entity->{$toKey};
+					if (isset($indexes[$value])) {
+						$source = $collection[$indexes[$value]];
+						$source->{$fieldName} = $entity;
+					}
+				} else {
+					$value = $entity[$toKey];
+					if (isset($indexes[$value])) {
+						$collection[$indexes[$value]][$fieldName] = $entity;
+					}
+				}
+			}
+
+		} else {
+			throw new Exception("Error {$this->type()} is unsupported ");
+		}
+		return $related;
+	}
+
+	/**
+	 * Gets all entities attached to a collection en entities.
+	 *
+	 * @param  mixed  $id An id or an array of ids.
+	 * @return object     A collection of items matching the id/ids.
+	 */
+	protected function _find($id, $options = array())
+	{
+		if ($this->link() !== static::LINK_KEY) {
+			throw new Exception("This relation is not based on a foreign key.");
+		}
+		if ($id === array()) {
+			return array();
+		}
+		$to = $this->to();
+		return $to::find('all', $options + array('conditions' => array(
+			current($this->key()) => $id
+		)));
+	}
+
+	/**
+	 * Indexes a collection.
+	 *
+	 * @param  mixed  $collection An collection to extract index from.
+	 * @param  string $name       The field name to build index for.
+	 * @return array              An array of indexes where keys are `$name` values and
+	 *                            values the correcponding index in the collection.
+	 */
+	protected function _index($collection, $name)
+	{
+		$indexes = array();
+		foreach ($collection as $key => $entity) {
+			if (is_object($entity)) {
+				$indexes[$entity->{$name}] = $key;
+			} else {
+				$indexes[$entity[$name]] = $key;
+			}
+		}
+		return $indexes;
+	}
+
+	/**
+	 * Unsets the relationship attached to a collection en entities.
+	 *
+	 * @param  mixed  $collection An collection to "clean up".
+	 */
+	public function _cleanup($collection)
+	{
+		$name = $this->name();
+		foreach ($collection as $index => $entity) {
+			if (is_object($entity)) {
+				unset($entity->{$name});
+			} else {
+				unset($entity[$name]);
+			}
+		}
 	}
 }
 
